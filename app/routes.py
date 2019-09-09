@@ -1,6 +1,6 @@
 import uuid
 
-from flask import jsonify, request
+from flask import request, redirect, url_for
 
 from app import app, db
 from app.errors import bad_request
@@ -10,7 +10,7 @@ from app.models import User, RegisteringUser
 @app.route('/')
 @app.route('/index')
 def index():
-    return "Hello, World!"
+    return ""
 
 
 # Called by Spotify auth service
@@ -28,14 +28,12 @@ def create_registering_user():
     registering_user = RegisteringUser(uuid=user_uuid, auth_code=data['code'])
     db.session.add(registering_user)
     db.session.commit()
-    return jsonify(registering_user.to_dict())
+    return redirect(url_for('static', filename='close.html'))
 
 
 @app.route('/users/complete', methods=['POST'])
 def create_user():
     data = request.get_json() or {}
-    print(type(data))
-    print('DATA' + str(data))
     if 'uuid' not in data:
         return bad_request('Must include UUID')
     registering_user_query = RegisteringUser.query.filter_by(uuid=uuid.UUID(data['uuid']).hex)
