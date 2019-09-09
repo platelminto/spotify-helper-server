@@ -1,9 +1,10 @@
-import time
+import uuid
+
+from flask import jsonify, request
 
 from app import app, db
-from flask import jsonify, url_for, request
-from app.models import User, TempUser, Token
 from app.errors import bad_request
+from app.models import User, RegisteringUser
 
 
 @app.route('/')
@@ -12,66 +13,53 @@ def index():
     return "Hello, World!"
 
 
-@app.route('/users/temp', methods=['GET'])
-def get_temp_users():
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 10, type=int), 100)
-    data = TempUser.to_collection_dict(TempUser.query, page, per_page, 'get_temp_users')
-    return jsonify(data)
-
-
-@app.route('/users/complete', methods=['GET'])
-def get_users():
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 10, type=int), 100)
-    data = User.to_collection_dict(User.query, page, per_page, 'get_users')
-    return jsonify(data)
-
-
-@app.route('/tokens', methods=['GET'])
-def get_tokens():
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 10, type=int), 100)
-    data = Token.to_collection_dict(Token.query, page, per_page, 'get_tokens')
-    return jsonify(data)
-
-
-@app.route('/users/temp', methods=['POST'])
-def create_temp_user():
-    data = request.get_json() or {}
-    if 'ip_address' not in data:
-        return bad_request('Must include machine IP')
-    if TempUser.query.filter_by(ip_address=data['ip_address']).first():
-        return bad_request("Current IP already registering")
-    temp_user = TempUser(ip_address=data['ip_address'])
-    db.session.add(temp_user)
+# Called by Spotify auth service
+@app.route('/users/registering', methods=['GET'])
+def create_registering_user():
+    data = request.args.to_dict() or {}
+    if 'error' in data:
+        return bad_request('Error: ' + data['error'])
+    try:
+        user_uuid = uuid.UUID(data['state']).hex # Check for UUID validity
+    except (ValueError, KeyError):
+        return bad_request('Must include correct UUID in the state')
+    RegisteringUser.query.filter_by(uuid=user_uuid).delete()
     db.session.commit()
-    return jsonify(temp_user.to_dict())
+    registering_user = RegisteringUser(uuid=user_uuid, auth_code=data['code'])
+    db.session.add(registering_user)
+    db.session.commit()
+    return jsonify(registering_user.to_dict())
 
 
 @app.route('/users/complete', methods=['POST'])
 def create_user():
     data = request.get_json() or {}
-    ip_address_query = TempUser.query.filter_by(ip_address=data['ip_address'])
-    if 'auth_code' not in data or 'ip_address' not in data:
-        return bad_request('Must include authorization code and IP')
-    if ip_address_query.count() == 0:
-        return bad_request('Given IP address is not currently authenticating')
-    TempUser.query.filter_by(ip_address=data['ip_address']).delete()
+    print(type(data))
+    print('DATA' + str(data))
+    if 'uuid' not in data:
+        return bad_request('Must include UUID')
+    registering_user_query = RegisteringUser.query.filter_by(uuid=uuid.UUID(data['uuid']).hex)
+    if registering_user_query.count() == 0:
+        return bad_request('Given UUID is not currently registering')
+
+    registered_user = registering_user_query.first()
+    response = User.get_access_info(registered_user.auth_code)
+    registering_user_query.delete()
+    User.query.filter_by(uuid=uuid.UUID(data['uuid']).hex).delete() # If we are re-registering, remove previous
     db.session.commit()
-    response = User.get_access_info(data['auth_code'])
-    # If there's an error, return the Spotify error directly
-    if response.status_code >= 400:
-        return response.text, response.status_code, response.headers.items()
-    if response.status_code == 200:
-        auth_info = response.json()
-        user = User(refresh_token=auth_info['refresh_token'])
-        db.session.add(user)
+    if response.status_code < 400:
+        db.session.add(User(uuid=registered_user.uuid))
         db.session.commit()
-        print(user.id)
-        token = Token(owner_id=user.id,
-                      access_token=auth_info['access_token'],
-                      expiry=int(time.time())+int(auth_info['expires_in']))
-        db.session.add(token)
-        db.session.commit()
-        return jsonify(user.to_dict())
+    return response.json(), response.status_code
+
+
+@app.route('/users/refresh', methods=['POST'])
+def refresh_tokens():
+    data = request.get_json() or {}
+    if 'uuid' not in data:
+        return bad_request('Must include UUID')
+    if User.query.filter_by(uuid=uuid.UUID(data['uuid']).hex).count() == 0:
+        return bad_request('Given UUID isn\'t registered')
+
+    response = User.get_refresh_info(data)
+    return response.json(), response.status_code

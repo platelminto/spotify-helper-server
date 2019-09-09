@@ -1,12 +1,14 @@
+import base64
+
 from flask import url_for
 
 from app import db
 import os
 import requests
 
-redirect_uri = 'http://localhost:8888/callback'
+redirect_uri = 'https://platelminto.eu.pythonanywhere.com/users/registering'
 get_token_url = 'https://accounts.spotify.com/api/token'
-client_id = os.getenv('SPOTIFY_CLIENT_ID')
+client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
 
 
@@ -35,25 +37,19 @@ class PaginatedAPIMixin(object):
 
 
 class User(PaginatedAPIMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    refresh_token = db.Column(db.String(64))
-    token = db.relationship('Token', uselist=False, back_populates="user")
+    uuid = db.Column(db.String(32), primary_key=True)
 
     def to_dict(self):
         return {
-            'id': self.id,
-            'refresh_token': self.refresh_token,
-            'access_token': self.token.access_token if self.token is not None else None,
-            'expiry': self.token.expiry if self.token is not None else None
+            'uuid': self.uuid,
         }
 
     def from_dict(self, data):
-        for field in ['id', 'refresh_token']:
-            if field in data:
-                setattr(self, field, data[field])
+        if 'uuid' in data:
+            self.uuid = data['uuid']
 
     def __repr__(self):
-        return '<User {} with refresh token {}>'.format(self.id, self.refresh_token)
+        return '<User {}>'.format(self.uuid)
 
     @staticmethod
     def get_access_info(auth_code):
@@ -64,28 +60,28 @@ class User(PaginatedAPIMixin, db.Model):
         r = requests.post(get_token_url, data=payload)
         return r
 
-
-class Token(PaginatedAPIMixin, db.Model):
-    access_token = db.Column(db.String(64), primary_key=True)
-    expiry = db.Column(db.Integer)
-    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    user = db.relationship("User", back_populates="token")
-
-    def __repr__(self):
-        return '<Access token for {} expires {}>'.format(self.owner_id, self.expiry)
+    @staticmethod
+    def get_refresh_info(payload):
+        headers = {'Authorization': 'Basic ' + base64.b64encode(
+            (client_id + ':' + client_secret).encode('ascii')).decode('ascii')}
+        r = requests.post('https://accounts.spotify.com/api/token', data=payload, headers=headers)
+        return r
 
 
-class TempUser(PaginatedAPIMixin, db.Model):
-    ip_address = db.Column(db.String(32), primary_key=True)
+class RegisteringUser(PaginatedAPIMixin, db.Model):
+    uuid = db.Column(db.String(32), primary_key=True)
+    auth_code = db.Column(db.String(512))
 
     def __repr__(self):
-        return '<Temporary user with IP ()>'.format(self.ip_address)
+        return '<Registering user {} with code {}>'.format(self.uuid, self.auth_code)
 
     def to_dict(self):
         return {
-            'ip_address': self.ip_address
+            'uuid': self.uuid,
+            'auth_code': self.auth_code
         }
 
     def from_dict(self, data):
-        if 'ip_address' in data:
-            self.ip_address = data['ip_address']
+        for field in ['uuid', 'auth_code']:
+            if field in data:
+                setattr(self, field, data[field])
