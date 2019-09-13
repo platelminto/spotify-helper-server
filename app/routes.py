@@ -3,7 +3,7 @@ import uuid
 from flask import request, redirect, url_for
 
 from app import app, db
-from app.errors import bad_request
+from app.errors import bad_request, error_response
 from app.models import User, RegisteringUser
 
 
@@ -57,7 +57,7 @@ def refresh_tokens():
     if 'uuid' not in data:
         return bad_request('Must include UUID')
     if User.query.filter_by(uuid=uuid.UUID(data['uuid']).hex).count() == 0:
-        return bad_request('Given UUID isn\'t registered')
+        return error_response(403, 'Given UUID isn\'t registered')
 
     response = User.get_refresh_info(data)
     return response.json(), response.status_code
