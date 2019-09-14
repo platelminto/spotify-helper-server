@@ -56,7 +56,11 @@ def refresh_tokens():
     data = request.get_json() or {}
     if 'uuid' not in data:
         return bad_request('Must include UUID')
-    if User.query.filter_by(uuid=uuid.UUID(data['uuid']).hex).count() == 0:
+    try:
+        if User.query.filter_by(uuid=uuid.UUID(data['uuid']).hex).count() == 0:
+            raise ValueError()
+
+    except ValueError:
         return error_response(403, 'Given UUID isn\'t registered')
 
     response = User.get_refresh_info(data)
